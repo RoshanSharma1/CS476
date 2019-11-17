@@ -28,10 +28,12 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
   | Or( e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
                     | Some (t1, c1), Some (t2, c2) ->  Some (Tbool, (t1, t2) :: c1 @ c2)
                     | _, _ -> None)
-  | If (e, e1, e2) -> (match get_constraints gamma e, get_constraints gamma e1, get_constraints gamma e2 with
+  | If (e', e1, e2) -> (match get_constraints gamma e', get_constraints gamma e1, get_constraints gamma e2 with
                      | Some (t, c), Some (t1, c1), Some (t2, c2) -> Some (t1, (t, Tbool) :: (t1, t2) :: c @ c1 @ c2)
                      | _, _, _ -> None)
-  | Not e -> Some (Tbool, [])
+  | Not e' -> (match get_constraints gamma e' with
+					 | Some (t, c) -> Some (Tbool, (t, Tbool) :: c)
+					| _ -> None)
   | Sub( e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
                     | Some (t1, c1), Some (t2, c2) ->  Some (Tint, (t1, t2) :: c1 @ c2)
                     | _, _ -> None)
