@@ -2,7 +2,7 @@ type ident = string
 
 type exp = Var of ident | Int of int | Add of exp * exp 
          | Sub of exp * exp| Mult of exp * exp 
-         | Bool of bool | Not of bool | And of exp * exp | Or of exp * exp
+         | Bool of bool | Not of exp | And of exp * exp | Or of exp * exp
          | Eq of exp * exp | If of exp * exp * exp
 
 let next = ref 0
@@ -33,7 +33,7 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
                      | _, _, _ -> None)
   | Not e' -> (match get_constraints gamma e' with
 					 | Some (t, c) -> Some (Tbool, (t, Tbool) :: c)
-					| _ -> None)
+					 | _ -> None)
   | Sub( e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
                     | Some (t1, c1), Some (t2, c2) ->  Some (Tint, (t1, t2) :: c1 @ c2)
                     | _, _ -> None)
