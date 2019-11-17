@@ -31,6 +31,15 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
   | If (e, e1, e2) -> (match get_constraints gamma e, get_constraints gamma e1, get_constraints gamma e2 with
                      | Some (t, c), Some (t1, c1), Some (t2, c2) -> Some (t1, (t, Tbool) :: (t1, t2) :: c @ c1 @ c2)
                      | _, _, _ -> None)
-  | Not b -> Some (Tbool, [])
+  | Not e -> Some (Tbool, [])
+  | Sub( e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
+                    | Some (t1, c1), Some (t2, c2) ->  Some (Tint, (t1, t2) :: c1 @ c2)
+                    | _, _ -> None)
+  | Add( e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
+                    | Some (t1, c1), Some (t2, c2) ->  Some (Tint, (t1, t2) :: c1 @ c2)
+                    | _, _ -> None)
+  | Mult( e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
+                    | Some (t1, c1), Some (t2, c2) ->  Some (Tint, (t1, t2) :: c1 @ c2)
+                    | _, _ -> None)
 
   )
