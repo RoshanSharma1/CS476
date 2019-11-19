@@ -1,3 +1,5 @@
+open List
+
 type ident = string 
 
 type exp = Var of ident | Int of int | Add of exp * exp 
@@ -70,3 +72,60 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
       | None -> None)
 
   )
+
+type substitution = tident -> typ option
+let empty_subst : substitution = fun _ -> None
+let empty_context : context = fun _ -> None
+let update g x t = fun y -> if y = x then Some t else g y
+let single_subst x t : substitution = update empty_subst x t
+                                        
+let rec apply_subst (s : substitution) (t : typ) : typ =
+  match t with
+  | Tint -> Tint
+  | Tbool -> Tbool
+  | Ttuple (t1, t2) -> Ttuple (apply_subst s t1, apply_subst s t2)
+  | TArray t1 -> TArray (apply_subst s t1)
+  | Tvar x -> (match s x with Some t -> t | None -> Tvar x)
+
+let compose_subst s1 s2 = fun x ->
+  match s2 x with
+  | Some t -> Some (apply_subst s1 t)
+  | None -> s1 x
+
+let apply_subst_c (s : substitution) (c : constraints) : constraints =
+  map (fun (t1, t2) -> (apply_subst s t1, apply_subst s t2)) c
+
+let rec fv (t : typ) =
+  match t with
+  | Tvar x -> [x]
+  | TArray t1 -> fv t1
+  | Ttuple (t1, t2) -> fv t1 @ fv t2
+  | _ -> []
+  
+  let rec unify (c : constraints) : substitution option =
+   match c with
+   | [] -> Some empty_subst
+   | (s, t) :: rest ->
+      if s = t then unify rest else
+        match s, t with
+        | Tvar x, _ -> if exists (fun y -> y = x) (fv t) then None else
+                         let s1 = single_subst x t in
+                         (match unify (apply_subst_c s1 rest) with
+                          | Some s' -> Some (compose_subst s' s1)
+                          | None -> None)
+        | _, Tvar x -> if exists (fun y -> y = x) (fv s) then None else
+                         let s1 = single_subst x s in
+                         (match unify (apply_subst_c s1 rest) with
+                          | Some s' -> Some (compose_subst s' s1)
+                          | None -> None)
+        | TArray s1, TArray t1 -> unify ((s1, t1) :: rest)
+        | Ttuple (s1, s2), Ttuple (t1, t2) -> unify ((s1, t1) :: (s2, t2) :: rest)
+        | _, _ -> None
+
+let infer_type (e : exp) =
+         match get_constraints empty_context e with
+         | Some (t, c) ->
+            (match unify c with
+             | Some s -> Some (apply_subst s t)
+             | None -> None)
+         | None -> None
