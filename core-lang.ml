@@ -7,18 +7,33 @@ type exp = Var of ident | Int of int | Add of exp * exp
          | Bool of bool | Not of exp | And of exp * exp | Or of exp * exp
          | Eq of exp * exp | If of exp * exp * exp | Array of ident * exp
          | Tuple of exp * exp | Fst of exp | Snd of exp
+         | GetField of exp * ident
 
  type cmd = Assign of ident * exp | Seq of cmd * cmd | Skip
          | IfC of exp * cmd * cmd | While of exp * cmd
          | Call of ident * ident * exp list | Return of exp
+         | SetField of exp * ident * exp
 
 let next = ref 0
 type tident = int
 let fresh_tident (u : unit) : tident = next := !next + 1; !next
 
-type typ = Tint | Tbool | TArray of typ | Tvar of tident | Ttuple of typ * typ | Tfun of typ * typ list 
+type typ = Tint | Tbool | TArray of typ | Tvar of tident
+		| Ttuple of typ * typ | Tfun of typ * typ list
+		| Tstruct of (typ * ident) list
+
 type constraints = (typ * typ) list
 type context = ident -> typ option
+
+let field_type_aux (l : (typ * ident) list) (f : ident) : typ option =
+  match List.find_opt (fun (_, n) -> n = f) l with
+  | Some (t, _) -> Some t
+  | _ -> None
+
+let field_type (t : typ) (f : ident) : typ option =
+  (match t  with
+  | Tstruct s -> field_type_aux s f
+  | _ -> None)
 
 
 let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option =
@@ -55,48 +70,49 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
                                     let t = fresh_tident () in
                                     Some (Tvar t,(t1, (TArray (Tvar t))) :: (t2, Tint) :: c)
                     | _, _ -> None)
-  | Tuple (e1, e2) ->
-     (match get_constraints gamma e1, get_constraints gamma e2 with
-      | Some (t1, c1), Some (t2, c2) ->
-         Some (Ttuple (t1, t2), c1 @ c2)
-      | _, _ -> None)
-  | Fst e ->
-     (match get_constraints gamma e with
-      | Some (t, c) ->
-         let t1 = fresh_tident () in
-         let t2 = fresh_tident () in
-         Some (Tvar t1, (t, Ttuple (Tvar t1, Tvar t2)) :: c)
-      | None -> None)
-  | Snd e ->
-     (match get_constraints gamma e with
-      | Some (t, c) ->
-         let t1 = fresh_tident () in
-         let t2 = fresh_tident () in
-         Some (Tvar t2, (t, Ttuple (Tvar t1, Tvar t2)) :: c)
-      | None -> None)
+  | Tuple (e1, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
+					      | Some (t1, c1), Some (t2, c2) -> Some (Ttuple (t1, t2), c1 @ c2)
+					      | _, _ -> None)
+  | Fst e' -> (match get_constraints gamma e' with
+		      | Some (t, c) ->
+		         let t1 = fresh_tident () in
+		         let t2 = fresh_tident () in
+		         Some (Tvar t1, (t, Ttuple (Tvar t1, Tvar t2)) :: c)
+		      | None -> None)
+  | Snd e' -> (match get_constraints gamma e' with
+		      | Some (t, c) ->
+		         let t1 = fresh_tident () in
+		         let t2 = fresh_tident () in
+		         Some (Tvar t2, (t, Ttuple (Tvar t1, Tvar t2)) :: c)
+		      | None -> None)
+  | GetField (e', f) -> (match get_constraints gamma e' with
+						  | Some (t, c) -> (match field_type t f with
+											  | Some t1 -> Some(t1, c)
+											  | None -> None)
+						  | None -> None)
 
   )
 
-  let rec get_constraints_exps (gamma : context) (es : exp list) : (typ * constraints) list option =
+let rec get_constraints_exps (gamma : context) (es : exp list) : (typ * constraints) list option =
    match es with
    | [] -> Some []
    | e :: rest -> (match get_constraints gamma e, get_constraints_exps gamma rest with
                    | Some con1, Some cons_rest -> Some (con1 :: cons_rest)
                    | _, _ -> None)
 
-   let types_of_cons_params (params : (typ * constraints) list) : typ list =
+let types_of_cons_params (params : (typ * constraints) list) : typ list =
    List.map fst params
 
-   let constraints_of_cons_params (params : (typ * constraints) list) : constraints =
+let constraints_of_cons_params (params : (typ * constraints) list) : constraints =
       List.flatten( List.map snd params )
    
 
-   let rec make_constrainsts (param1 : typ list) (param2: typ list) : (typ * typ) list =
+let rec make_constrainsts (param1 : typ list) (param2: typ list) : (typ * typ) list =
       (match param1, param2 with      
        |t1::rest1, t2 :: rest2 -> ((t1,t2):: make_constrainsts rest1 rest2 )
        | _, _ -> [] )
 
-  let rec get_constraints_c (gamma : context) (c : cmd) : (constraints) option = 
+let rec get_constraints_c (gamma : context) (c : cmd) : (constraints) option = 
    (match c with 
    | Assign(x,e) -> (match gamma x, get_constraints gamma e with 
                      | Some t1, Some(t2, c2) -> Some((t1,t2) :: c2)
@@ -117,6 +133,11 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
    | Return e -> (match gamma "__ret", get_constraints gamma e with
                   | Some t1, Some (t2,c2) -> Some((t1,t2) :: c2)
                   | _, _ -> None)
+   | SetField (e1, f, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
+						  | Some (t1, c1), Some (t2, c2) -> (match field_type t1 f with
+											  | Some t -> Some ((t2,t)::c1 @ c2)
+											  | None -> None)
+						  | _, _ -> None)
    )
 
 type substitution = tident -> typ option
@@ -150,7 +171,7 @@ let rec fv (t : typ) =
   | Ttuple (t1, t2) -> fv t1 @ fv t2
   | _ -> []
   
-  let rec unify (c : constraints) : substitution option =
+let rec unify (c : constraints) : substitution option =
    match c with
    | [] -> Some empty_subst
    | (s, t) :: rest ->
