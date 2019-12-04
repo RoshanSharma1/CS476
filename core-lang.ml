@@ -7,7 +7,7 @@ type exp = Var of ident | Int of int | Add of exp * exp
          | Bool of bool | Not of exp | And of exp * exp | Or of exp * exp
          | Eq of exp * exp | If of exp * exp * exp | Array of ident * exp
          | Tuple of exp * exp | Fst of exp | Snd of exp
-         | GetField of exp * ident
+         | Struct of (ident * exp) list | GetField of exp * ident
 
  type cmd = Assign of ident * exp | Seq of cmd * cmd | Skip
          | IfC of exp * cmd * cmd | While of exp * cmd
@@ -34,7 +34,6 @@ let field_type (t : typ) (f : ident) : typ option =
   (match t  with
   | Tstruct s -> field_type_aux s f
   | _ -> None)
-
 
 let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option =
  ( match e with
@@ -85,6 +84,11 @@ let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option
 		         let t2 = fresh_tident () in
 		         Some (Tvar t2, (t, Ttuple (Tvar t1, Tvar t2)) :: c)
 		      | None -> None)
+  | Struct flist -> (match flist with
+						| [] -> Some (Tstruct [], [])
+						| (x, e') :: rest -> (match get_constraints gamma e', get_constraints gamma (Struct rest) with
+										| Some (t1, c1), Some (Tstruct tlist, c2) -> Some (Tstruct ((t1, x)::tlist), c1 @ c2)
+										| _, _ -> None))
   | GetField (e', f) -> (match get_constraints gamma e' with
 						  | Some (t, c) -> (match field_type t f with
 											  | Some t1 -> Some(t1, c)
@@ -154,7 +158,8 @@ let rec apply_subst (s : substitution) (t : typ) : typ =
   | Ttuple (t1, t2) -> Ttuple (apply_subst s t1, apply_subst s t2)
   | TArray t1 -> TArray (apply_subst s t1)
   | Tvar x -> (match s x with Some t -> t | None -> Tvar x)
-  | Tfun(t1,type_list) -> Tfun (apply_subst s t1, List.map (apply_subst s) type_list ) 
+  | Tfun (t1,type_list) -> Tfun (apply_subst s t1, List.map (apply_subst s) type_list ) 
+  | Tstruct (tlist) -> Tstruct (tlist)
 
 let compose_subst s1 s2 = fun x ->
   match s2 x with
