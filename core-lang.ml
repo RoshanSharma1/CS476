@@ -14,15 +14,17 @@ type cmd = Assign of ident * exp | Seq of cmd * cmd | Skip
          | Call of ident * ident * exp list | Return of exp
          | SetField of exp * ident * exp
 
-let next = ref 0
-type tident = int
-let fresh_tident (u : unit) : tident = next := !next + 1; !next
-
 type typ = Tint | Tbool | TArray of typ | Tvar of tident
 		| Ttuple of typ * typ | Tfun of typ * typ list
 		| Tstruct of ((typ * ident) list)
 
 type func = (typ*((typ* ident) list)* cmd)
+
+type prog = ((func list) * cmd)
+
+let next = ref 0
+type tident = int
+let fresh_tident (u : unit) : tident = next := !next + 1; !next
 
 let types_of_params (params : (typ * ident) list) : typ list =
   List.map fst params
@@ -142,7 +144,7 @@ let rec get_constraints_c (gamma : context) (c : cmd) : (context * constraints) 
                      | _ -> None)
    | Seq(c1,c2) -> ( match get_constraints_c gamma c1 with  
                     | Some (g1, cons1) -> (match get_constraints_c g1 c2 with
-                    							                | Some (g2, cons2) -> Some (gamma, cons1 @ cons2)
+                    							                | Some (g2, cons2) -> Some (g2, cons1 @ cons2)
                     							            	| None -> None)
                     | _ -> None)
    | Skip -> Some (gamma, [])

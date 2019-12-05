@@ -43,10 +43,14 @@ let c1 : cmd = Seq (Seq ((Assign ( "x", Add (Var "a", Fst (Var "c")))), Assign("
                    Return (Int 0))
 let test10 : func = (Tint, [(Tint, "a"); (Tbool, "b"); (Ttuple (Tint, Tbool), "c")], c1)
 let res10 = update_func_gamma empty_context test10
-(* Context {a = Tint, b = Tbool, c = Ttuple(Tint, Tbool)} *)
+(* Context = {a = Tint, b = Tbool, c = Ttuple(Tint, Tbool)} *)
 let res10_5 = infer_type_func test10
 (* bool = true *)
 
 let test11 : cmd = Call ("x", "test10", [Int 3; Bool true; Tuple ((Int 6, Bool false))])
 let res11 = infer_type_c (update empty_context "test10" (make_func_type test10)) test11
+(* bool = true *)
+
+let p : prog = ([test10], test11)
+
 
