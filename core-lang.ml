@@ -9,7 +9,7 @@ type exp = Var of ident | Int of int | Add of exp * exp
          | Tuple of exp * exp | Fst of exp | Snd of exp
          | Struct of (ident * exp) list | GetField of exp * ident
 
- type cmd = Assign of ident * exp | Seq of cmd * cmd | Skip
+type cmd = Assign of ident * exp | Seq of cmd * cmd | Skip
          | IfC of exp * cmd * cmd | While of exp * cmd
          | Call of ident * ident * exp list | Return of exp
          | SetField of exp * ident * exp
@@ -20,10 +20,20 @@ let fresh_tident (u : unit) : tident = next := !next + 1; !next
 
 type typ = Tint | Tbool | TArray of typ | Tvar of tident
 		| Ttuple of typ * typ | Tfun of typ * typ list
-		| Tstruct of (typ * ident) list
+		| Tstruct of ((typ * ident) list)
+
+type func = (typ*((typ* ident) list)* cmd)
+
+let types_of_params (params : (typ * ident) list) : typ list =
+  List.map fst params
+
+let make_func_type (f : func) : typ = (match f with
+                                        | (t, params, c) -> Tfun (t, (types_of_params params)))
 
 type constraints = (typ * typ) list
 type context = ident -> typ option
+
+let update g x t = fun y -> if y = x then Some t else g y
 
 let field_type_aux (l : (typ * ident) list) (f : ident) : typ option =
   match List.find_opt (fun (_, n) -> n = f) l with
@@ -34,6 +44,15 @@ let field_type (t : typ) (f : ident) : typ option =
   (match t  with
   | Tstruct s -> field_type_aux s f
   | _ -> None)
+
+let rec update_param_gamma (gamma : context) (l : (typ* ident) list) : context = 
+                    (match l with
+                      | [] -> gamma
+                      | (t, x) :: rest -> update (update_param_gamma gamma rest) x t)
+                                                                      
+let update_func_gamma (gamma : context) (f : func) : context = (match f with
+                  | (t, params, c) -> update (update_param_gamma gamma params) "__ret" t)
+
 
 let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option =
  ( match e with
@@ -116,30 +135,32 @@ let rec make_constrainsts (param1 : typ list) (param2: typ list) : (typ * typ) l
        |t1::rest1, t2 :: rest2 -> ((t1,t2):: make_constrainsts rest1 rest2 )
        | _, _ -> [] )
 
-let rec get_constraints_c (gamma : context) (c : cmd) : (constraints) option = 
+let rec get_constraints_c (gamma : context) (c : cmd) : (context * constraints) option = 
    (match c with 
-   | Assign(x,e) -> (match gamma x, get_constraints gamma e with 
-                     | Some t1, Some(t2, c2) -> Some((t1,t2) :: c2)
-                     | _, _ -> None)
-   | Seq(c1,c2) -> ( match get_constraints_c gamma c1, get_constraints_c gamma c2 with 
-                    | Some cons1, Some cons2 -> Some ( cons1 @ cons2)
-                    | _, _ -> None)
-   | Skip -> Some ([])
+   | Assign(x,e) -> (match get_constraints gamma e with 
+                     | Some(t2, c2) -> Some(update gamma x t2, c2)
+                     | _ -> None)
+   | Seq(c1,c2) -> ( match get_constraints_c gamma c1 with  
+                    | Some (g1, cons1) -> (match get_constraints_c g1 c2 with
+                    							                | Some (g2, cons2) -> Some (gamma, cons1 @ cons2)
+                    							            	| None -> None)
+                    | _ -> None)
+   | Skip -> Some (gamma, [])
    | IfC (e, c1, c2) -> (match get_constraints gamma e, get_constraints_c gamma c1, get_constraints_c gamma c2 with
-                        |Some (t1, con1), Some cons1, Some cons2 -> Some ((t1, Tbool) :: con1 @ cons1 @ cons1)
+                        |Some (t1, con1), Some (g1, cons1), Some (g2, cons2) -> Some (gamma, (t1, Tbool) :: con1 @ cons1 @ cons1)
                         | _,_,_ -> None)
    | While(e, cmd) -> (match get_constraints gamma e, get_constraints_c gamma cmd with
-                       |Some (t1, con1), Some cons1 -> Some ((t1, Tbool) :: con1 @ cons1)
+                       |Some (t1, con1), Some (g1, cons1) -> Some (gamma, (t1, Tbool) :: con1 @ cons1)
                        | _,_ -> None)
-   | Call (x,f,args) -> (match gamma x, gamma f, get_constraints_exps gamma args with
-                        | Some t, Some Tfun(t1,type_list), Some cons_list -> Some((t,t1) :: make_constrainsts (types_of_cons_params cons_list) (type_list) @ constraints_of_cons_params cons_list )
-                        | _, _, _ -> None)
+   | Call (x,f,args) -> (match gamma f, get_constraints_exps gamma args with
+                        | Some Tfun(t1,type_list), Some cons_list -> Some(gamma, make_constrainsts (types_of_cons_params cons_list) (type_list) @ constraints_of_cons_params cons_list )
+                        | _, _ -> None)
    | Return e -> (match gamma "__ret", get_constraints gamma e with
-                  | Some t1, Some (t2,c2) -> Some((t1,t2) :: c2)
+                  | Some t1, Some (t2,c2) -> Some(gamma, (t1,t2) :: c2)
                   | _, _ -> None)
    | SetField (e1, f, e2) -> (match get_constraints gamma e1, get_constraints gamma e2 with
 						  | Some (t1, c1), Some (t2, c2) -> (match field_type t1 f with
-											  | Some t -> Some ((t2,t)::c1 @ c2)
+											  | Some t -> Some (gamma, (t2,t)::c1 @ c2)
 											  | None -> None)
 						  | _, _ -> None)
    )
@@ -147,7 +168,6 @@ let rec get_constraints_c (gamma : context) (c : cmd) : (constraints) option =
 type substitution = tident -> typ option
 let empty_subst : substitution = fun _ -> None
 let empty_context : context = fun _ -> None
-let update g x t = fun y -> if y = x then Some t else g y
 let single_subst x t : substitution = update empty_subst x t
 
                                         
@@ -204,10 +224,13 @@ let infer_type (e : exp) =
              | None -> None)
          | None -> None
 
-let infer_type_c (c : cmd) : bool =
-            match get_constraints_c empty_context c with
-            | Some c ->
+let infer_type_c (gamma : context) (c : cmd) : bool =
+            match get_constraints_c gamma c with
+            | Some (g, c) ->
                (match unify c with
                 | Some s -> true
                 | None -> false)
             | None -> false
+
+let infer_type_func (f : func) = match f with
+                                  | (t, params, c) -> infer_type_c (update_func_gamma empty_context f) c
