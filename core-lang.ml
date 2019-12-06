@@ -1,6 +1,8 @@
 open List
 
 type ident = string 
+type tident = int
+
 
 type exp = Var of ident | Int of int | Add of exp * exp 
          | Sub of exp * exp| Mult of exp * exp 
@@ -18,19 +20,18 @@ type typ = Tint | Tbool | TArray of typ | Tvar of tident
 		| Ttuple of typ * typ | Tfun of typ * typ list
 		| Tstruct of ((typ * ident) list)
 
-type func = (typ*((typ* ident) list)* cmd)
+type func = (typ* ident *((typ* ident) list)* cmd)
 
 type prog = ((func list) * cmd)
 
 let next = ref 0
-type tident = int
 let fresh_tident (u : unit) : tident = next := !next + 1; !next
 
 let types_of_params (params : (typ * ident) list) : typ list =
   List.map fst params
 
 let make_func_type (f : func) : typ = (match f with
-                                        | (t, params, c) -> Tfun (t, (types_of_params params)))
+                                        | (t, name, params, c) -> Tfun (t, (types_of_params params)))
 
 type constraints = (typ * typ) list
 type context = ident -> typ option
@@ -53,8 +54,14 @@ let rec update_param_gamma (gamma : context) (l : (typ* ident) list) : context =
                       | (t, x) :: rest -> update (update_param_gamma gamma rest) x t)
                                                                       
 let update_func_gamma (gamma : context) (f : func) : context = (match f with
-                  | (t, params, c) -> update (update_param_gamma gamma params) "__ret" t)
+                  | (t, name, params, c) -> update (update_param_gamma gamma params) "__ret" t)
 
+
+ let rec make_func_types (gamma : context) (funcs: func list) : context = 
+                    (match funcs with
+                      | [] -> gamma
+                      | f :: rest -> (match f with 
+                                      | (t, name, params, c) -> update (make_func_types gamma rest) name (make_func_type f)))
 
 let rec get_constraints (gamma : context) (e : exp) : (typ * constraints) option =
  ( match e with
@@ -235,4 +242,9 @@ let infer_type_c (gamma : context) (c : cmd) : bool =
             | None -> false
 
 let infer_type_func (f : func) = match f with
-                                  | (t, params, c) -> infer_type_c (update_func_gamma empty_context f) c
+                                  | (t, name, params, c) -> infer_type_c (update_func_gamma empty_context f) c
+
+let infer_type_prog (p: prog) = match p with 
+                                | (fl,c) -> if (List.mem false (List.map infer_type_func fl)) 
+                                           then false
+                                           else infer_type_c (make_func_types empty_context fl) c
